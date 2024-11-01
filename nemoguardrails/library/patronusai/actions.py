@@ -108,18 +108,16 @@ async def patronus_lynx_check_output_hallucination(
         )
 
     hallucination, reasoning = parse_patronus_lynx_response(result)
-    print(f"Hallucination: {hallucination}, Reasoning: {reasoning}")
     return {"hallucination": hallucination, "reasoning": reasoning}
 
 
 def check_guardrail_pass(
-    response: dict | None, success_strategy: Literal["all_pass", "any_pass"]
+    response: Optional[dict], success_strategy: Literal["all_pass", "any_pass"]
 ) -> bool:
     """
     Check if evaluations in the Patronus API response pass based on the success strategy.
     "all_pass" requires all evaluators to pass for success.
     "any_pass" requires only one evaluator to pass for success.
-
     """
     if not response or "results" not in response:
         return False
@@ -146,9 +144,14 @@ async def patronus_evaluate_request(
     user_input: Optional[str] = None,
     bot_response: Optional[str] = None,
     provided_context: Optional[Union[str, List[str]]] = None,
-) -> dict:
+) -> Optional[dict]:
     """
-    Make a call to the Patronus API with optional output and context parameters.
+    Make a call to the Patronus Evaluate API.
+
+    Returns a dictionary of the API response JSON if successful, or None if a server error occurs.
+        * Server errors will cause the guardrail to block the bot response
+
+    Raises a ValueError for client errors (400-499), as these indicate invalid requests.
     """
     api_key = os.environ.get("PATRONUS_API_KEY")
 
@@ -224,13 +227,12 @@ async def patronus_api_check_output(
     user_input = context.get("user_message")
     bot_response = context.get("bot_message")
     provided_context = context.get("relevant_chunks")
-    print(
-        f"user_input={user_input}, bot_response={bot_response}, provided_context={provided_context}"
-    )
 
     patronus_config = llm_task_manager.config.rails.config.patronus.output
     evaluate_config = getattr(patronus_config, "evaluate_config", {})
-    success_strategy = getattr(evaluate_config, "success_strategy", "all_pass")
+    success_strategy: Literal["all_pass", "any_pass"] = getattr(
+        evaluate_config, "success_strategy", "all_pass"
+    )
     api_params = getattr(evaluate_config, "params", {})
     response = await patronus_evaluate_request(
         api_params=api_params,
