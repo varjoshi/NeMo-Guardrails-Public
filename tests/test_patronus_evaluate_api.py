@@ -18,6 +18,10 @@ from aioresponses import aioresponses
 
 from nemoguardrails import RailsConfig
 from nemoguardrails.actions.actions import ActionResult, action
+from nemoguardrails.library.patronusai.actions import (
+    check_guardrail_pass,
+    patronus_evaluate_request,
+)
 from tests.utils import TestChat
 
 PATRONUS_EVALUATE_API_URL = "https://api.patronus.ai/v1/evaluate"
@@ -750,3 +754,230 @@ def test_patronus_evaluate_api_default_response_when_500_status_code(
 
         chat >> "Hi"
         chat << "I don't know the answer to that."
+
+
+def test_check_guardrail_pass_empty_response():
+    """Test that empty/None responses return False"""
+    assert check_guardrail_pass(None, "all_pass") is False
+
+
+def test_check_guardrail_pass_missing_results():
+    """Test that response without results key returns False"""
+    assert check_guardrail_pass({}, "all_pass") is False
+
+
+def test_check_guardrail_pass_all_pass_strategy_success():
+    """Test that all_pass strategy returns True when all evaluators pass"""
+    response = {
+        "results": [
+            {"evaluation_result": {"pass": True}},
+            {"evaluation_result": {"pass": True}},
+        ]
+    }
+    assert check_guardrail_pass(response, "all_pass") is True
+
+
+def test_check_guardrail_pass_all_pass_strategy_failure():
+    """Test that all_pass strategy returns False when one evaluator fails"""
+    response = {
+        "results": [
+            {"evaluation_result": {"pass": True}},
+            {"evaluation_result": {"pass": False}},
+        ]
+    }
+    assert check_guardrail_pass(response, "all_pass") is False
+
+
+def test_check_guardrail_pass_any_pass_strategy_success():
+    """Test that any_pass strategy returns True when at least one evaluator passes"""
+    response = {
+        "results": [
+            {"evaluation_result": {"pass": False}},
+            {"evaluation_result": {"pass": True}},
+        ]
+    }
+    assert check_guardrail_pass(response, "any_pass") is True
+
+
+def test_check_guardrail_pass_any_pass_strategy_failure():
+    """Test that any_pass strategy returns False when all evaluators fail"""
+    response = {
+        "results": [
+            {"evaluation_result": {"pass": False}},
+            {"evaluation_result": {"pass": False}},
+        ]
+    }
+    assert check_guardrail_pass(response, "any_pass") is False
+
+
+def test_check_guardrail_pass_malformed_evaluation_results():
+    """Test that malformed evaluation results return False"""
+    response = {
+        "results": [{"evaluation_result": "not_a_dict"}, {"no_evaluation_result": {}}]
+    }
+    assert check_guardrail_pass(response, "all_pass") is False
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_success(monkeypatch):
+    """Test successful API request to Patronus Evaluate endpoint"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+    with aioresponses() as m:
+        m.post(
+            PATRONUS_EVALUATE_API_URL,
+            payload={
+                "results": [
+                    {
+                        "evaluator_id": "lynx-large-2024-07-23",
+                        "criteria": "patronus:hallucination",
+                        "status": "success",
+                        "evaluation_result": {
+                            "pass": True,
+                        },
+                    }
+                ]
+            },
+        )
+
+        response = await patronus_evaluate_request(
+            api_params={
+                "evaluators": [{"evaluator": "lynx"}],
+                "tags": {"test": "true"},
+            },
+            user_input="Does NeMo Guardrails integrate with the Patronus API?",
+            bot_response="Yes, NeMo Guardrails integrates with the Patronus API.",
+            provided_context="Yes, NeMo Guardrails integrates with the Patronus API.",
+        )
+
+        assert "results" in response
+        assert len(response["results"]) == 1
+        assert response["results"][0]["evaluation_result"]["pass"] is True
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_400_error(monkeypatch):
+    """Test that ValueError is raised with correct message for 400 status code"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+    with aioresponses() as m:
+        m.post(
+            PATRONUS_EVALUATE_API_URL,
+            status=400,
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            await patronus_evaluate_request(
+                api_params={
+                    "evaluators": [{"evaluator": "lynx"}],
+                },
+                user_input="test",
+                bot_response="test",
+                provided_context="test",
+            )
+        assert "The Patronus Evaluate API call failed with status code 400." in str(
+            exc_info.value
+        )
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_500_error(monkeypatch):
+    """Test that None is returned for 500 status code and no ValueError is raised"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+    with aioresponses() as m:
+        m.post(
+            PATRONUS_EVALUATE_API_URL,
+            status=500,
+        )
+
+        response = await patronus_evaluate_request(
+            api_params={
+                "evaluators": [{"evaluator": "lynx"}],
+            },
+            user_input="test",
+            bot_response="test",
+            provided_context="test",
+        )
+
+        assert response is None
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_missing_api_key():
+    """Test that ValueError is raised with correct message when API key is missing"""
+    with pytest.raises(ValueError) as exc_info:
+        await patronus_evaluate_request(
+            api_params={},
+            user_input="test",
+            bot_response="test",
+            provided_context="test",
+        )
+    assert "PATRONUS_API_KEY environment variable not set" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_missing_evaluators(monkeypatch):
+    """Test that ValueError is raised when evaluators field is missing"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+
+    with pytest.raises(ValueError) as exc_info:
+        await patronus_evaluate_request(
+            api_params={"tags": {"test": "true"}},
+            user_input="test",
+            bot_response="test",
+            provided_context="test",
+        )
+    assert (
+        "The Patronus Evaluate API parameters must contain an 'evaluators' field"
+        in str(exc_info.value)
+    )
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_evaluators_not_list(monkeypatch):
+    """Test that ValueError is raised when evaluators is not a list"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+
+    with pytest.raises(ValueError) as exc_info:
+        await patronus_evaluate_request(
+            api_params={"evaluators": {"evaluator": "lynx"}},
+            user_input="test",
+            bot_response="test",
+            provided_context="test",
+        )
+    assert "The Patronus Evaluate API parameter 'evaluators' must be a list" in str(
+        exc_info.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_evaluator_not_dict(monkeypatch):
+    """Test that ValueError is raised when evaluator is not a dictionary"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+
+    with pytest.raises(ValueError) as exc_info:
+        await patronus_evaluate_request(
+            api_params={"evaluators": ["lynx"]},
+            user_input="test",
+            bot_response="test",
+            provided_context="test",
+        )
+    assert "Each object in the 'evaluators' list must be a dictionary" in str(
+        exc_info.value
+    )
+
+
+@pytest.mark.asyncio
+async def test_patronus_evaluate_request_evaluator_missing_field(monkeypatch):
+    """Test that ValueError is raised when evaluator dict is missing evaluator field"""
+    monkeypatch.setenv("PATRONUS_API_KEY", "xxx")
+
+    with pytest.raises(ValueError) as exc_info:
+        await patronus_evaluate_request(
+            api_params={"evaluators": [{"explain_strategy": "on-fail"}]},
+            user_input="test",
+            bot_response="test",
+            provided_context="test",
+        )
+    assert (
+        "Each dictionary in the 'evaluators' list must contain the 'evaluator' field"
+        in str(exc_info.value)
+    )
