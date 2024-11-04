@@ -79,7 +79,6 @@ def test_patronus_evaluate_api_success_strategy_all_pass(monkeypatch):
                 tags: { "hello": "world" },
               }
     """
-    print("rails config", YAML_PREFIX + yaml_evaluate_config)
     config = RailsConfig.from_content(
         colang_content=COLANG_CONFIG, yaml_content=YAML_PREFIX + yaml_evaluate_config
     )
@@ -542,7 +541,6 @@ def test_patronus_evaluate_api_default_success_strategy_is_all_pass_happy_case(
                 tags: { "hello": "world" },
               }
     """
-    print("rails config", YAML_PREFIX + yaml_evaluate_config)
     config = RailsConfig.from_content(
         colang_content=COLANG_CONFIG, yaml_content=YAML_PREFIX + yaml_evaluate_config
     )
@@ -612,7 +610,6 @@ def test_patronus_evaluate_api_default_success_strategy_all_pass_fails_when_one_
                 tags: { "hello": "world" },
               }
     """
-    print("rails config", YAML_PREFIX + yaml_evaluate_config)
     config = RailsConfig.from_content(
         colang_content=COLANG_CONFIG, yaml_content=YAML_PREFIX + yaml_evaluate_config
     )
@@ -682,7 +679,6 @@ def test_patronus_evaluate_api_internal_error_when_400_status_code(
                 tags: { "hello": "world" },
               }
     """
-    print("rails config", YAML_PREFIX + yaml_evaluate_config)
     config = RailsConfig.from_content(
         colang_content=COLANG_CONFIG, yaml_content=YAML_PREFIX + yaml_evaluate_config
     )
